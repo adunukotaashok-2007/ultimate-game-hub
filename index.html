@@ -1,67 +1,65 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#101020">
-<title>Ultimate Game Hub</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ULTIMATE GAME HUB</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <div class="brand">🎮 ULTIMATE <span>GAME HUB</span></div>
-  <button id="themeBtn">☀️</button>
-</header>
+  <header>
+    <h1>🎮 ULTIMATE GAME HUB</h1>
+    <p>10 ARCADE GAMES • 300 LEVELS</p>
+    <input id="search" placeholder="Search games...">
+  </header>
 
-<section class="hero">
-  <div>
-    <p class="tag">YOUR PERSONAL ARCADE</p>
-    <h1>Play. Explore.<br><span>Repeat.</span></h1>
-    <p>Classic memories. Modern gaming.</p>
-    <button class="primary" onclick="showGames()">EXPLORE GAMES →</button>
+  <main>
+    <section class="hero">
+      <h2>ENTER THE ARCADE</h2>
+      <p>Play more. Win more. Unlock every level.</p>
+      <h3>⭐ Total Stars: <span id="stars">0</span></h3>
+    </section>
+
+    <section id="games" class="games"></section>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="game-window">
+      <div class="game-heading">
+        <div>
+          <h2 id="gameTitle">Game</h2>
+          <p id="levelText">Level 1 / 30</p>
+        </div>
+        <button id="close">✕</button>
+      </div>
+
+      <div class="stats">
+        <span id="score">Score: 0</span>
+        <span id="lives">❤️ 3</span>
+      </div>
+
+      <canvas id="game" width="800" height="500"></canvas>
+
+      <div id="message">
+        <h2 id="messageTitle">READY?</h2>
+        <p id="messageText">Start your adventure!</p>
+        <button id="start">START GAME</button>
+      </div>
+
+      <div class="controls">
+        <button data-key="ArrowLeft">◀</button>
+        <button data-key="ArrowUp">▲</button>
+        <button data-key="ArrowDown">▼</button>
+        <button data-key="ArrowRight">▶</button>
+        <button data-key="Space">FIRE / JUMP</button>
+      </div>
+
+      <p id="instructions"></p>
+      <button id="restart">RESTART LEVEL</button>
+    </div>
   </div>
-  <div class="hero-art">👾<br>🎮</div>
-</section>
 
-<section class="stats">
-  <div><b id="totalGames">6</b><small>Games</small></div>
-  <div><b id="played">0</b><small>Games played</small></div>
-  <div><b id="bestScore">0</b><small>Best score</small></div>
-</section>
-
-<main>
-  <div class="heading">
-    <h2>Explore Games</h2>
-    <input id="search" placeholder="🔍 Search games...">
-  </div>
-
-  <nav id="categories">
-    <button class="active" data-category="All">All</button>
-    <button data-category="Classic">Classic</button>
-    <button data-category="Puzzle">Puzzle</button>
-    <button data-category="Arcade">Arcade</button>
-    <button data-category="Multiplayer">Multiplayer</button>
-    <button data-category="Favorites">❤️ Favorites</button>
-  </nav>
-
-  <div id="games" class="game-grid"></div>
-</main>
-
-<div id="player" class="hidden">
-  <div class="game-top">
-    <button onclick="closeGame()">← Back</button>
-    <h2 id="gameTitle">Game</h2>
-    <button onclick="restartGame()">↻</button>
-  </div>
-  <div id="gameArea"></div>
-</div>
-
-<footer>
-  <h3>ULTIMATE GAME HUB</h3>
-  <p>One hub. Endless fun.</p>
-  <small>Version 1.0 • Built for mobile and PC</small>
-</footer>
-
-<script src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
