@@ -1,397 +1,589 @@
 
-const games=[
- {id:"snake",name:"Snake",icon:"🐍",category:"Classic",desc:"Eat, grow and beat your high score."},
- {id:"memory",name:"Memory Match",icon:"🧠",category:"Puzzle",desc:"Find matching hidden cards."},
- {id:"tictactoe",name:"Tic Tac Toe",icon:"❌",category:"Multiplayer",desc:"Play against a friend on one device."},
- {id:"2048",name:"2048",icon:"🔢",category:"Puzzle",desc:"Combine numbers to reach 2048."},
- {id:"reaction",name:"Reaction Test",icon:"⚡",category:"Arcade",desc:"Test your reaction speed."},
- {id:"clicker",name:"Coin Clicker",icon:"🪙",category:"Arcade",desc:"Collect coins and beat your record."}
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const $ = id => document.getElementById(id);
+const W = 800, H = 500, MAX_LEVEL = 30;
+
+const games = [
+  ["bounce", "🏀", "Bounce Quest", "Jump across platforms and avoid spikes."],
+  ["diamond", "💎", "Diamond Rush", "Collect diamonds and find the exit."],
+  ["space", "🚀", "Space Impact", "Shoot enemy ships and survive waves."],
+  ["maze", "👾", "Maze Chomp", "Collect dots and escape the ghosts."],
+  ["brick", "🧱", "Brick Breaker", "Break all the bricks."],
+  ["mine", "💣", "Mine Finder", "Reveal safe tiles and avoid mines."],
+  ["racer", "🏎️", "Neon Road Racer", "Avoid traffic and survive the road."],
+  ["heli", "🚁", "Heli Escape", "Fly through dangerous tunnels."],
+  ["bomber", "💥", "Bomber Grid", "Break crates and find the exit."],
+  ["tank", "🛡️", "Tank Battle", "Destroy enemy tanks."]
 ];
 
-let category="All",currentGame="",played=0;
-let favorites=JSON.parse(localStorage.favorites||"[]");
-let scores=JSON.parse(localStorage.scores||"{}");
-let cleanup=null;
+let progress = JSON.parse(localStorage.getItem("ughProgress") || "{}");
+let current = null;
+let level = 1, score = 0, lives = 3;
+let running = false, frame = 0;
+let keys = {};
+let S = {};
 
-const $=id=>document.getElementById(id);
-
-function save(){
- localStorage.favorites=JSON.stringify(favorites);
- localStorage.scores=JSON.stringify(scores);
+function saved(id) {
+  return progress[id] || (progress[id] = { best: 0, stars: 0 });
 }
 
-function render(){
- const q=$("search").value.toLowerCase();
- const list=games.filter(g=>
-  (category==="All"||g.category===category||
-   (category==="Favorites"&&favorites.includes(g.id)))&&
-  (g.name+" "+g.desc).toLowerCase().includes(q)
- );
-
- $("games").innerHTML=list.map(g=>`
- <article class="game-card">
-  <div class="game-icon">${g.icon}</div>
-  <h3>${g.name}</h3>
-  <p>${g.desc}</p>
-  <p>🏆 Best: ${scores[g.id]||0}</p>
-  <div class="card-actions">
-   <button onclick="launch('${g.id}')">PLAY ▶</button>
-   <button class="fav" onclick="toggleFav('${g.id}')">
-    ${favorites.includes(g.id)?"❤️":"♡"}
-   </button>
-  </div>
- </article>`).join("")||"<p>No games found.</p>";
-
- $("totalGames").textContent=games.length;
- $("played").textContent=played;
- $("bestScore").textContent=Math.max(0,...Object.values(scores));
+function save() {
+  localStorage.setItem("ughProgress", JSON.stringify(progress));
+  $("stars").textContent =
+    Object.values(progress).reduce((a, p) => a + p.stars, 0);
 }
 
-function showGames(){
- $("games").scrollIntoView({behavior:"smooth"});
+function renderGames() {
+  const q = $("search").value.toLowerCase();
+  $("games").innerHTML = "";
+
+  games.filter(g => g[2].toLowerCase().includes(q)).forEach(g => {
+    const p = saved(g[0]);
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="emoji">${g[1]}</div>
+      <h3>${g[2]}</h3>
+      <p>${g[3]}</p>
+      <p>Level ${Math.min(MAX_LEVEL, p.best + 1)} / ${MAX_LEVEL}</p>
+      <button>PLAY NOW</button>`;
+    card.onclick = () => openGame(g);
+    $("games").appendChild(card);
+  });
+  save();
 }
 
-$("search").addEventListener("input",render);
-$("categories").addEventListener("click",e=>{
- if(!e.target.dataset.category)return;
- category=e.target.dataset.category;
- document.querySelectorAll("nav button").forEach(b=>
-  b.classList.toggle("active",b===e.target));
- render();
-});
+$("search").addEventListener("input", renderGames);
 
-function toggleFav(id){
- favorites.includes(id)?
- favorites=favorites.filter(x=>x!==id):favorites.push(id);
- save();render();
+function openGame(g) {
+  current = g;
+  level = Math.min(MAX_LEVEL, saved(g[0]).best + 1);
+  score = 0;
+  lives = 3;
+  $("gameTitle").textContent = g[2];
+  $("instructions").textContent = g[3];
+  $("modal").classList.remove("hidden");
+  setup();
+  overlay("READY!", "Level " + level + " of " + MAX_LEVEL, "START");
 }
 
-$("themeBtn").onclick=()=>{
- document.body.classList.toggle("light");
- $("themeBtn").textContent=
- document.body.classList.contains("light")?"🌙":"☀️";
+$("close").onclick = () => {
+  running = false;
+  cancelAnimationFrame(frame);
+  $("modal").classList.add("hidden");
 };
 
-function record(score){
- if(score>=(scores[currentGame]||0)){
-  scores[currentGame]=score;
-  save();
- }
- render();
+function overlay(title, msg, button) {
+  $("message").classList.remove("hidden");
+  $("messageTitle").textContent = title;
+  $("messageText").textContent = msg;
+  $("start").textContent = button;
 }
 
-function launch(id){
- currentGame=id;
- played++;
- $("player").classList.remove("hidden");
- $("gameTitle").textContent=games.find(g=>g.id===id).name;
- runGame();
-}
+function setup() {
+  running = false;
+  S = { t: 0, bullets: [], enemies: [], objects: [] };
 
-function closeGame(){
- if(cleanup)cleanup();
- cleanup=null;
- $("player").classList.add("hidden");
- $("gameArea").innerHTML="";
- render();
-}
-
-function restartGame(){runGame();}
-
-function runGame(){
- if(cleanup)cleanup();
- cleanup=null;
- const area=$("gameArea");
- area.innerHTML="";
- if(currentGame==="snake")snake(area);
- if(currentGame==="memory")memory(area);
- if(currentGame==="tictactoe")ticTacToe(area);
- if(currentGame==="2048")game2048(area);
- if(currentGame==="reaction")reaction(area);
- if(currentGame==="clicker")clicker(area);
-}
-
-// 1. SNAKE
-function snake(area){
- area.innerHTML=`
- <div class="game-ui">Score: <b id="sScore">0</b>
- <p>Use arrow keys or swipe to move.</p></div>
- <canvas id="snakeCanvas" width="360" height="360"></canvas>
- <div class="game-ui"><button id="snakeRestart">RESTART</button></div>`;
-
- const c=$("snakeCanvas"),ctx=c.getContext("2d");
- const size=18,cols=20;
- let snake=[{x:10,y:10}],dir={x:1,y:0},food={x:5,y:5};
- let score=0,alive=true,timer;
- function place(){
-  do{
-   food={x:Math.floor(Math.random()*cols),y:Math.floor(Math.random()*cols)};
-  }while(snake.some(p=>p.x===food.x&&p.y===food.y));
- }
- function draw(){
-  if(!alive)return;
-  let h={x:snake[0].x+dir.x,y:snake[0].y+dir.y};
-  if(h.x<0||h.y<0||h.x>=cols||h.y>=cols||
-    snake.some(p=>p.x===h.x&&p.y===h.y)){
-   alive=false;clearInterval(timer);
-   ctx.fillStyle="white";ctx.font="24px Arial";
-   ctx.fillText("GAME OVER",105,180);
-   record(score);return;
+  if (current[0] === "bounce") {
+    S.p = { x: 60, y: 400, vy: 0 };
+    S.platforms = [
+      [0,460,800,40],
+      [150,380,120,15],
+      [330,300,120,15],
+      [510,220,120,15],
+      [690,160,90,15]
+    ];
+    S.goal = [730,110,35,50];
   }
-  snake.unshift(h);
-  if(h.x===food.x&&h.y===food.y){
-   score+=10;$("sScore").textContent=score;place();
-  }else snake.pop();
 
-  ctx.fillStyle="#111827";ctx.fillRect(0,0,360,360);
-  ctx.fillStyle="#ff5353";
-  ctx.fillRect(food.x*size,food.y*size,size-2,size-2);
-  snake.forEach((p,i)=>{
-   ctx.fillStyle=i?"#48d7a0":"#b8ff76";
-   ctx.fillRect(p.x*size,p.y*size,size-2,size-2);
-  });
- }
- function change(x,y){
-  if(x!==-dir.x||y!==-dir.y)dir={x,y};
- }
- const key=e=>{
-  const m={
-   ArrowUp:[0,-1],ArrowDown:[0,1],
-   ArrowLeft:[-1,0],ArrowRight:[1,0],
-   w:[0,-1],s:[0,1],a:[-1,0],d:[1,0]
-  };
-  if(m[e.key]){
-   e.preventDefault();change(...m[e.key]);
+  if (current[0] === "diamond") {
+    S.p = { x: 30, y: 30 };
+    S.gems = Array.from({length: 3 + Math.floor(level/2)}, (_,i) => ({
+      x: 100 + (i*117 + level*23)%620,
+      y: 100 + (i*73 + level*31)%300,
+      got: false
+    }));
+    S.exit = [735,430,35,35];
   }
- };
- window.addEventListener("keydown",key);
- let sx=0,sy=0;
- const start=e=>{sx=e.offsetX;sy=e.offsetY;};
- const end=e=>{
-  let dx=e.offsetX-sx,dy=e.offsetY-sy;
-  if(Math.abs(dx)>Math.abs(dy))change(dx>0?1:-1,0);
-  else change(0,dy>0?1:-1);
- };
- c.addEventListener("pointerdown",start);
- c.addEventListener("pointerup",end);
- $("snakeRestart").onclick=()=>runGame();
- timer=setInterval(draw,115);
- draw();
- cleanup=()=>{clearInterval(timer);window.removeEventListener("keydown",key);};
-}
 
-// 2. MEMORY MATCH
-function memory(area){
- const symbols=["🍎","🍋","🍇","🍒","🍉","⭐","💎","🚀"];
- let cards=[...symbols,...symbols].sort(()=>Math.random()-.5);
- let first=null,lock=false,matches=0,moves=0;
- area.innerHTML=`
- <div class="game-ui">Matches: <b id="matches">0</b>/8 |
- Moves: <b id="mMoves">0</b></div>
- <div class="memory-grid" id="memoryGrid"></div>
- <button class="action" id="memoryReset">RESTART</button>`;
- const grid=$("memoryGrid");
- cards.forEach((symbol,i)=>{
-  const b=document.createElement("button");
-  b.className="memory-card";b.textContent="?";
-  b.onclick=()=>{
-   if(lock||b.dataset.open||b.dataset.done)return;
-   b.textContent=symbol;b.dataset.open="1";
-   if(first===null){first={b,symbol};return;}
-   moves++;$("mMoves").textContent=moves;
-   if(first.symbol===symbol){
-    first.b.dataset.done="1";b.dataset.done="1";
-    first=null;matches++;
-    $("matches").textContent=matches;
-    if(matches===8){record(Math.max(0,1000-moves*10));}
-   }else{
-    lock=true;let old=first;first=null;
-    setTimeout(()=>{
-     old.b.textContent="?";b.textContent="?";
-     delete old.b.dataset.open;delete b.dataset.open;
-     lock=false;
-    },700);
-   }
-  };
-  grid.appendChild(b);
- });
- $("memoryReset").onclick=()=>runGame();
-}
+  if (current[0] === "space") {
+    S.p = { x: 400, y: 430 };
+    S.spawn = 0;
+  }
 
-// 3. TIC TAC TOE
-function ticTacToe(area){
- let cells=Array(9).fill("");
- let turn="X",over=false;
- area.innerHTML=`
- <div class="game-ui"><b id="ttMessage">Player X's turn</b>
- <p>Two players on the same device.</p></div>
- <div class="ttt" id="ttGrid"></div>
- <button class="action" id="ttReset">NEW GAME</button>`;
- const grid=$("ttGrid");
- function check(){
-  const lines=[[0,1,2],[3,4,5],[6,7,8],
-   [0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
-  return lines.find(l=>cells[l[0]]&&
-   cells[l[0]]===cells[l[1]]&&cells[l[1]]===cells[l[2]]);
- }
- function render(){
-  grid.innerHTML="";
-  cells.forEach((v,i)=>{
-   let b=document.createElement("button");
-   b.textContent=v;
-   b.onclick=()=>{
-    if(over||cells[i])return;
-    cells[i]=turn;
-    const win=check();
-    if(win){
-     over=true;$("ttMessage").textContent="🎉 Player "+turn+" wins!";
-     record(100);
-    }else if(cells.every(Boolean)){
-     over=true;$("ttMessage").textContent="It's a draw!";
-    }else{
-     turn=turn==="X"?"O":"X";
-     $("ttMessage").textContent="Player "+turn+"'s turn";
+  if (current[0] === "maze") {
+    S.p = { x: 1, y: 1 };
+    S.grid = Array.from({length:13}, (_,y) =>
+      Array.from({length:19}, (_,x) =>
+        x===0 || y===0 || x===18 || y===12 ||
+        ((x*7+y*11+level*3)%13===0) ? 1 : 0
+      )
+    );
+    S.grid[1][1] = 0;
+    S.grid[11][17] = 0;
+    S.ghosts = [{x:17,y:1},{x:17,y:11}];
+  }
+
+  if (current[0] === "brick") {
+    S.paddle = { x: 340, y: 460, w: 120 };
+    S.ball = { x: 400, y: 440, vx: 3+level*.1, vy: -4, stuck: true };
+    S.bricks = [];
+    for (let y=0;y<5+Math.floor(level/6);y++)
+      for (let x=0;x<8;x++)
+        S.bricks.push({x:55+x*87,y:50+y*27,hp:1+(level>8?1:0)});
+  }
+
+  if (current[0] === "mine") {
+    S.n = Math.min(12, 6 + Math.floor(level/5));
+    S.mines = 4 + level;
+    S.cells = Array(S.n*S.n).fill(0).map(() => ({
+      mine: false, open: false
+    }));
+    for(let i=0;i<S.mines;i++) {
+      let k;
+      do { k=Math.floor(Math.random()*S.cells.length); }
+      while(S.cells[k].mine);
+      S.cells[k].mine=true;
     }
-    render();
-   };
-   grid.appendChild(b);
-  });
- }
- $("ttReset").onclick=()=>runGame();
- render();
+  }
+
+  if (current[0] === "racer") {
+    S.lane = 1;
+    S.cars = [];
+    S.spawn = 0;
+  }
+
+  if (current[0] === "heli") {
+    S.p = {x:150,y:250,vy:0};
+    S.walls = [];
+    S.distance = 0;
+    S.spawn = 0;
+  }
+
+  if (current[0] === "bomber") {
+    S.n=11;
+    S.p={x:1,y:1};
+    S.grid=Array.from({length:11},(_,y)=>
+      Array.from({length:11},(_,x)=>
+        x===0||y===0||x===10||y===10||
+        (x%2===0&&y%2===0)?1:
+        (Math.random()<.35?2:0)
+      )
+    );
+    S.grid[1][1]=0;
+    S.grid[1][2]=0;
+    S.grid[2][1]=0;
+    S.grid[9][9]=0;
+    S.bombs=[];
+  }
+
+  if (current[0] === "tank") {
+    S.p={x:400,y:430};
+    S.enemies=Array.from({length:2+Math.floor(level/4)},(_,i)=>({
+      x:100+i*100,y:80+(i%2)*60,hp:1+Math.floor(level/10)
+    }));
+    S.bullets=[];
+  }
+
+  updateHUD();
+  draw();
 }
 
-// 4. 2048
-function game2048(area){
- let board=Array(16).fill(0),score=0,over=false;
- area.innerHTML=`
- <div class="game-ui">Score: <b id="2048Score">0</b>
- <p>Use arrow keys or swipe to combine matching tiles.</p></div>
- <div id="grid2048" style="display:grid;grid-template-columns:repeat(4,1fr);gap:7px;max-width:360px;margin:auto"></div>
- <button class="action" id="reset2048">RESTART</button>`;
- const grid=$("grid2048");
- function add(){
-  let empty=board.map((v,i)=>v===0?i:-1).filter(i=>i>=0);
-  if(empty.length)board[empty[Math.floor(Math.random()*empty.length)]]=Math.random()<.9?2:4;
- }
- function draw(){
-  grid.innerHTML="";
-  board.forEach(v=>{
-   let b=document.createElement("div");
-   b.style.cssText="aspect-ratio:1;display:grid;place-items:center;border-radius:9px;background:"+
-    (v?"#6652a5":"#29283b")+";font-size:25px;font-weight:bold";
-   b.textContent=v||"";
-   grid.appendChild(b);
-  });
-  $("2048Score").textContent=score;
- }
- function slide(line){
-  let a=line.filter(v=>v);
-  for(let i=0;i<a.length-1;i++){
-   if(a[i]===a[i+1]){a[i]*=2;score+=a[i];a.splice(i+1,1);}
-  }
-  while(a.length<4)a.push(0);
-  return a;
- }
- function move(direction){
-  if(over)return;
-  let old=board.join(",");
-  for(let n=0;n<4;n++){
-   let ids=Array.from({length:4},(_,i)=>
-    direction===0?n*4+i:direction===1?n*4+3-i:
-    direction===2?i*4+n:(3-i)*4+n);
-   let line=slide(ids.map(i=>board[i]));
-   ids.forEach((id,i)=>board[id]=line[i]);
-  }
-  if(old!==board.join(",")){add();draw();}
-  if(board.includes(2048)){
-   over=true;record(score+2048);
-  }
- }
- const key=e=>{
-  let d={ArrowLeft:0,ArrowRight:1,ArrowUp:2,ArrowDown:3};
-  if(d[e.key]!==undefined){e.preventDefault();move(d[e.key]);}
- };
- window.addEventListener("keydown",key);
- $("reset2048").onclick=()=>runGame();
- add();add();draw();
- let sx,sy;
- grid.addEventListener("pointerdown",e=>{sx=e.clientX;sy=e.clientY;});
- grid.addEventListener("pointerup",e=>{
-  let dx=e.clientX-sx,dy=e.clientY-sy;
-  if(Math.max(Math.abs(dx),Math.abs(dy))<20)return;
-  move(Math.abs(dx)>Math.abs(dy)?(dx>0?1:0):(dy>0?3:2));
- });
- cleanup=()=>window.removeEventListener("keydown",key);
+function updateHUD() {
+  $("levelText").textContent = `LEVEL ${level} / ${MAX_LEVEL}`;
+  $("score").textContent = "Score: " + score;
+  $("lives").textContent = "❤️ " + lives;
 }
 
-// 5. REACTION TEST
-function reaction(area){
- let state="ready",startTime=0,timer;
- area.innerHTML=`
- <div class="game-ui">
- <h2>⚡ Test Your Reflexes</h2>
- <p id="reactionMessage">Press START and wait for green.</p>
- <div id="reactionBox" style="padding:65px 10px;border-radius:15px;background:#b44a4a;font-size:22px">WAIT FOR GREEN</div>
- <button id="reactionStart">START</button>
- </div>`;
- const box=$("reactionBox"),msg=$("reactionMessage");
- $("reactionStart").onclick=()=>{
-  clearTimeout(timer);state="waiting";
-  box.style.background="#b44a4a";box.textContent="WAIT...";
-  msg.textContent="Wait for the green signal!";
-  timer=setTimeout(()=>{
-   state="go";startTime=performance.now();
-   box.style.background="#229a60";box.textContent="CLICK NOW!";
-  },1000+Math.random()*3500);
- };
- box.onclick=()=>{
-  if(state==="waiting"){
-   clearTimeout(timer);state="ready";
-   msg.textContent="Too early! Try again.";
-  }else if(state==="go"){
-   let ms=Math.round(performance.now()-startTime);
-   state="ready";box.textContent=ms+" ms";
-   box.style.background="#51438e";
-   msg.textContent="Your reaction time!";
-   record(Math.max(0,1000-ms));
+function start() {
+  $("message").classList.add("hidden");
+  running = true;
+  cancelAnimationFrame(frame);
+  frame = requestAnimationFrame(loop);
+}
+
+$("start").onclick = start;
+
+$("restart").onclick = () => {
+  lives = 3;
+  setup();
+  overlay("READY!", "Level " + level, "START");
+};
+
+function loop() {
+  if (!running) return;
+  update();
+  draw();
+  frame = requestAnimationFrame(loop);
+}
+
+function finishLevel() {
+  running = false;
+  saved(current[0]).best = Math.max(saved(current[0]).best, level);
+  saved(current[0]).stars = Math.max(saved(current[0]).stars, level);
+  save();
+
+  if(level >= MAX_LEVEL) {
+    overlay("🏆 CHAMPION!", "You completed all 30 levels!", "PLAY AGAIN");
+    $("start").onclick = () => {
+      level = 1; score = 0; lives = 3;
+      $("start").onclick = start;
+      setup(); start();
+    };
+  } else {
+    level++;
+    setup();
+    overlay("LEVEL CLEARED!", "Welcome to level " + level, "NEXT LEVEL");
+    $("start").onclick = () => {
+      $("start").onclick = start;
+      start();
+    };
   }
- };
- cleanup=()=>clearTimeout(timer);
 }
 
-// 6. COIN CLICKER
-function clicker(area){
- let count=0;
- area.innerHTML=`
- <div class="game-ui">
- <h2>🪙 Coin Collector</h2>
- <p>Coins collected: <b id="coinCount">0</b></p>
- <p>Tap the coin as fast as you can!</p>
- <button id="coinButton" style="font-size:75px;background:#51438e">🪙</button>
- <p id="coinTime">Time: 20 seconds</p>
- <button id="coinStart">START</button>
- </div>`;
- let started=false,remaining=20,timer;
- const btn=$("coinButton");
- btn.onclick=()=>{
-  if(!started)return;
-  count++;$("coinCount").textContent=count;
- };
- $("coinStart").onclick=()=>{
-  if(started)return;
-  started=true;count=0;remaining=20;
-  $("coinCount").textContent=count;
-  timer=setInterval(()=>{
-   remaining--;$("coinTime").textContent="Time: "+remaining+" seconds";
-   if(remaining<=0){
-    clearInterval(timer);started=false;
-    $("coinTime").textContent="Finished! Coins: "+count;
-    record(count);
-   }
-  },1000);
- };
- cleanup=()=>clearInterval(timer);
+function lose(msg) {
+  if(!running) return;
+  lives--;
+  running = false;
+  if(lives > 0) {
+    setup();
+    overlay("TRY AGAIN", msg + " Lives left: " + lives, "CONTINUE");
+  } else {
+    overlay("GAME OVER", msg, "RETRY LEVEL");
+    $("start").onclick = () => {
+      lives=3; score=0; setup();
+      $("start").onclick=start;
+      start();
+    };
+  }
 }
 
-render();
+function update() {
+  S.t++;
+  const speed = 4 + level*.12;
+  const left = keys.ArrowLeft, right = keys.ArrowRight;
+  const up = keys.ArrowUp, down = keys.ArrowDown;
+  const fire = keys.Space;
+
+  switch(current[0]) {
+    case "bounce": {
+      let p=S.p;
+      p.x=Math.max(0,Math.min(770,p.x+(right-left)*5));
+      p.vy+=.45;
+      p.y+=p.vy;
+      p.on=false;
+      S.platforms.forEach(a=>{
+        if(p.vy>0&&p.x+25>a[0]&&p.x<a[0]+a[2]&&p.y+25>=a[1]&&p.y+25<a[1]+18){
+          p.y=a[1]-25;p.vy=0;p.on=true;
+        }
+      });
+      if(fire&&p.on){p.vy=-11;p.on=false;}
+      if(p.y>500) return lose("You fell!");
+      if(p.x>700&&p.y<160) finishLevel();
+      break;
+    }
+
+    case "diamond": {
+      let p=S.p;
+      p.x=Math.max(0,Math.min(775,p.x+(right-left)*speed));
+      p.y=Math.max(0,Math.min(475,p.y+(down-up)*speed));
+      S.gems.forEach(g=>{
+        if(!g.got&&Math.hypot(p.x-g.x,p.y-g.y)<22){
+          g.got=true;score+=100;
+        }
+      });
+      if(S.gems.every(g=>g.got)&&p.x>710&&p.y>405)finishLevel();
+      break;
+    }
+
+    case "space": {
+      let p=S.p;
+      p.x=Math.max(15,Math.min(785,p.x+(right-left)*6));
+      p.y=Math.max(20,Math.min(480,p.y+(down-up)*6));
+      if(fire&&S.t%9===0)S.bullets.push({x:p.x,y:p.y,v:9});
+      S.bullets.forEach(b=>b.y-=b.v);
+      S.spawn++;
+      if(S.spawn>Math.max(12,50-level)){
+        S.spawn=0;
+        S.enemies.push({x:30+Math.random()*740,y:-20,hp:1+Math.floor(level/10)});
+      }
+      S.enemies.forEach(e=>{
+        e.y+=1.5+level*.1;
+        S.bullets.forEach(b=>{
+          if(!b.dead&&Math.abs(b.x-e.x)<22&&Math.abs(b.y-e.y)<22){
+            b.dead=true;e.hp--;score+=20;
+          }
+        });
+        if(Math.hypot(p.x-e.x,p.y-e.y)<25)lose("Enemy collision!");
+      });
+      S.bullets=S.bullets.filter(b=>!b.dead&&b.y>0);
+      S.enemies=S.enemies.filter(e=>e.hp>0&&e.y<510);
+      if(score>=level*100+250)finishLevel();
+      break;
+    }
+
+    case "maze": {
+      if(S.t%8===0){
+        let p=S.p;
+        let dx=right-left,dy=down-up;
+        if(S.grid[p.y+dy]?.[p.x+dx]===0){
+          p.x+=dx;p.y+=dy;score+=10;
+        }
+        S.ghosts.forEach(g=>{
+          let choices=[[1,0],[-1,0],[0,1],[0,-1]].filter(([x,y])=>S.grid[g.y+y]?.[g.x+x]===0);
+          if(choices.length){
+            let c=choices[Math.floor(Math.random()*choices.length)];
+            g.x+=c[0];g.y+=c[1];
+          }
+          if(g.x===p.x&&g.y===p.y)lose("A ghost caught you!");
+        });
+        if(S.grid.flat().every(v=>v!==0))finishLevel();
+      }
+      break;
+    }
+
+    case "brick": {
+      let p=S.paddle,b=S.ball;
+      p.x=Math.max(0,Math.min(680,p.x+(right-left)*8));
+      if(b.stuck){
+        b.x=p.x+60;b.y=445;
+        if(fire)b.stuck=false;
+      } else {
+        b.x+=b.vx;b.y+=b.vy;
+        if(b.x<8||b.x>792)b.vx*=-1;
+        if(b.y<8)b.vy*=-1;
+        if(b.y>500)return lose("Ball lost!");
+        if(b.y>p.y-12&&b.x>p.x&&b.x<p.x+120&&b.vy>0)b.vy*=-1;
+        S.bricks.forEach(br=>{
+          if(br.hp>0&&b.x>55+(S.bricks.indexOf(br)%8)*87&&b.x<125+(S.bricks.indexOf(br)%8)*87&&b.y>br.y&&b.y<br.y+20){
+            br.hp--;b.vy*=-1;score+=10;
+          }
+        });
+      }
+      if(S.bricks.every(b=>b.hp<=0))finishLevel();
+      break;
+    }
+
+    case "mine": {
+      if(S.cells.every(c=>c.open||c.mine))finishLevel();
+      break;
+    }
+
+    case "racer": {
+      if(left&&S.t%7===0)S.lane=Math.max(0,S.lane-1);
+      if(right&&S.t%7===0)S.lane=Math.min(2,S.lane+1);
+      S.spawn++;
+      if(S.spawn>Math.max(14,45-level)){
+        S.spawn=0;S.cars.push({lane:Math.floor(Math.random()*3),y:-70});
+      }
+      S.cars.forEach(c=>c.y+=5+level*.2);
+      S.cars.forEach(c=>{
+        if(c.lane===S.lane&&c.y>390&&c.y<475)lose("Traffic crash!");
+      });
+      S.cars=S.cars.filter(c=>c.y<550);
+      score++;
+      if(S.t>800+level*25)finishLevel();
+      break;
+    }
+
+    case "heli": {
+      let p=S.p;
+      p.vy+=(fire||up?-.65:.42);
+      p.vy=Math.max(-5,Math.min(6,p.vy));
+      p.y+=p.vy;
+      S.distance++;
+      S.spawn++;
+      if(S.spawn>45){
+        S.spawn=0;
+        S.walls.push({x:800,center:130+Math.random()*240,gap:220-level*2});
+      }
+      S.walls.forEach(w=>w.x-=4+level*.15);
+      S.walls.forEach(w=>{
+        if(p.x+15>w.x&&p.x<w.x+60&&(p.y<w.center-w.gap/2||p.y+20>w.center+w.gap/2))
+          lose("You hit a wall!");
+      });
+      S.walls=S.walls.filter(w=>w.x> -70);
+      if(p.y<0||p.y>480)lose("You crashed!");
+      if(S.distance>500+level*20)finishLevel();
+      score=Math.floor(S.distance);
+      break;
+    }
+
+    case "bomber": {
+      if(S.t%8===0){
+        let p=S.p,dx=right-left,dy=down-up;
+        if(S.grid[p.y+dy]?.[p.x+dx]===0){p.x+=dx;p.y+=dy;}
+        if(fire&&!S.bombKey){
+          S.bombs.push({x:p.x,y:p.y,t:60});
+          S.bombKey=true;
+        }
+      }
+      if(!fire)S.bombKey=false;
+      S.bombs.forEach(b=>b.t--);
+      S.bombs=S.bombs.filter(b=>{
+        if(b.t<=0){
+          for(let y=Math.max(1,b.y-2);y<=Math.min(9,b.y+2);y++)
+            for(let x=Math.max(1,b.x-2);x<=Math.min(9,b.x+2);x++)
+              if(S.grid[y][x]===2){S.grid[y][x]=0;score+=20;}
+          return false;
+        }
+        return true;
+      });
+      if(S.p.x===9&&S.p.y===9&&S.grid.flat().every(v=>v!==2))finishLevel();
+      break;
+    }
+
+    case "tank": {
+      let p=S.p;
+      p.x=Math.max(20,Math.min(780,p.x+(right-left)*4));
+      p.y=Math.max(20,Math.min(480,p.y+(down-up)*4));
+      if(fire&&S.t%12===0)S.bullets.push({x:p.x,y:p.y,vx:0,vy:-8});
+      S.bullets.forEach(b=>b.y+=b.vy);
+      S.bullets.forEach(b=>S.enemies.forEach(e=>{
+        if(e.hp>0&&Math.hypot(e.x-b.x,e.y-b.y)<23){e.hp--;b.dead=true;score+=30;}
+      }));
+      S.bullets=S.bullets.filter(b=>!b.dead&&b.y>0);
+      S.enemies=S.enemies.filter(e=>e.hp>0);
+      if(!S.enemies.length)finishLevel();
+      break;
+    }
+  }
+  updateHUD();
+}
+
+function box(x,y,w,h,color){
+  ctx.fillStyle=color;ctx.fillRect(x,y,w,h);
+}
+function dot(x,y,r,color){
+  ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  box(0,0,W,H,"#071020");
+
+  switch(current[0]) {
+    case "bounce":
+      S.platforms.forEach(p=>box(...p,"#43e8dc"));
+      box(...S.goal,"#a58aff");
+      dot(S.p.x+12,S.p.y+12,13,"#ffe36b");
+      break;
+
+    case "diamond":
+      S.gems.forEach(g=>{if(!g.got)dot(g.x,g.y,10,"#43e8ed")});
+      box(...S.exit,"#a58aff");
+      box(S.p.x,S.p.y,25,25,"#ffe36b");
+      break;
+
+    case "space":
+      S.bullets.forEach(b=>dot(b.x,b.y,5,"#43e8ed"));
+      S.enemies.forEach(e=>dot(e.x,e.y,17,"#ff5379"));
+      dot(S.p.x,S.p.y,18,"#ffe36b");
+      break;
+
+    case "maze": {
+      let cw=W/19,ch=H/13;
+      S.grid.forEach((row,y)=>row.forEach((v,x)=>{
+        if(v===1)box(x*cw,y*ch,cw-2,ch-2,"#344caa");
+        else if(v===0)dot(x*cw+cw/2,y*ch+ch/2,2,"white");
+      }));
+      dot(S.p.x*cw+cw/2,S.p.y*ch+ch/2,10,"#ffe36b");
+      S.ghosts.forEach(g=>dot(g.x*cw+cw/2,g.y*ch+ch/2,10,"#ff5379"));
+      break;
+    }
+
+    case "brick":
+      S.bricks.forEach((b,i)=>{if(b.hp>0)box(55+(i%8)*87,b.y,76,18,b.hp>1?"#ff8957":"#917bff")});
+      box(S.paddle.x,S.paddle.y,120,14,"#43e8dc");
+      dot(S.ball.x,S.ball.y,9,"#ffe36b");
+      break;
+
+    case "mine": {
+      let size=Math.min(55,400/S.n);
+      let ox=(W-size*S.n)/2;
+      let oy=(H-size*S.n)/2;
+      S.cells.forEach((c,i)=>{
+        let x=i%S.n,y=Math.floor(i/S.n);
+        box(ox+x*size+2,oy+y*size+2,size-4,size-4,c.open?(c.mine?"#d94c69":"#293a5a"):"#536990");
+        if(c.open&&c.mine){
+          ctx.fillStyle="white";ctx.fillText("✹",ox+x*size+size/2-5,oy+y*size+size/2+5);
+        }
+      });
+      break;
+    }
+
+    case "racer":
+      box(220,0,360,H,"#203047");
+      for(let y=0;y<H;y+=70)box(395,y,8,35,"white");
+      S.cars.forEach(c=>box(285+c.lane*115,c.y,45,65,"#ff5379"));
+      box(285+S.lane*115,410,45,70,"#43e8dc");
+      break;
+
+    case "heli":
+      S.walls.forEach(w=>{
+        box(w.x,0,60,w.center-w.gap/2,"#9372ff");
+        box(w.x,w.center+w.gap/2,60,H,"#9372ff");
+      });
+      dot(S.p.x,S.p.y,14,"#ffe36b");
+      break;
+
+    case "bomber": {
+      let size=H/11;
+      S.grid.forEach((row,y)=>row.forEach((v,x)=>{
+        if(v===1)box(x*size,y*size,size-2,size-2,"#53617e");
+        if(v===2)box(x*size,y*size,size-2,size-2,"#a56b49");
+      }));
+      box(9*size,9*size,size-2,size-2,"#43e8dc");
+      dot(S.p.x*size+size/2,S.p.y*size+size/2,12,"#ffe36b");
+      break;
+    }
+
+    case "tank":
+      S.enemies.forEach(e=>dot(e.x,e.y,18,"#ff5379"));
+      S.bullets.forEach(b=>dot(b.x,b.y,6,"#ffe36b"));
+      dot(S.p.x,S.p.y,18,"#43e8dc");
+      break;
+  }
+}
+
+canvas.addEventListener("pointerdown",e=>{
+  if(!current||current[0]!=="mine")return;
+  let r=canvas.getBoundingClientRect();
+  let size=Math.min(55,400/S.n);
+  let ox=(W-size*S.n)/2,oy=(H-size*S.n)/2;
+  let x=Math.floor(((e.clientX-r.left)*W/r.width-ox)/size);
+  let y=Math.floor(((e.clientY-r.top)*H/r.height-oy)/size);
+  if(x<0||y<0||x>=S.n||y>=S.n)return;
+  let c=S.cells[y*S.n+x];
+  if(c.open)return;
+  c.open=true;
+  if(c.mine){
+    draw();
+    lose("You uncovered a mine!");
+    return;
+  }
+  score+=10;
+  if(S.cells.every(c=>c.open||c.mine))finishLevel();
+  draw();
+});
+
+window.addEventListener("keydown",e=>{
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key))e.preventDefault();
+  keys[e.code==="Space"?"Space":e.key]=true;
+});
+window.addEventListener("keyup",e=>{
+  keys[e.code==="Space"?"Space":e.key]=false;
+});
+
+document.querySelectorAll(".controls button").forEach(b=>{
+  const k=b.dataset.key;
+  b.addEventListener("pointerdown",e=>{e.preventDefault();keys[k]=true;});
+  ["pointerup","pointerleave","pointercancel"].forEach(ev=>
+    b.addEventListener(ev,()=>keys[k]=false)
+  );
+});
+
+save();
+renderGames();
